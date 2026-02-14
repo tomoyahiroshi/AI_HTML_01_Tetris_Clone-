@@ -115,6 +115,7 @@ class Tetris {
     this.highScore = this.loadHighScore();
     this.reset();
     this.bindInput();
+    this.startGame();
     requestAnimationFrame((t) => this.loop(t));
   }
 
@@ -220,6 +221,9 @@ class Tetris {
     this.score = 0;
     this.lines = 0;
     this.level = 1;
+    this.dropAccumulator = 0;
+    this.lockTimer = 0;
+    this.lockResetCount = 0;
     this.clearingRows = null;
     this.spawn();
     this.updateHud();
