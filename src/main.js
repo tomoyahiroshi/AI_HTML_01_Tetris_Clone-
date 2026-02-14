@@ -1,0 +1,568 @@
+const COLS = 10;
+const ROWS = 22;
+const VISIBLE_ROWS = 20;
+const BLOCK = 30;
+const NEXT_COUNT = 5;
+const LOCK_DELAY_MS = 500;
+const MAX_LOCK_RESETS = 15;
+const DAS_MS = 140;
+const ARR_MS = 30;
+
+const SCORE_TABLE = {
+  1: 100,
+  2: 300,
+  3: 500,
+  4: 800,
+};
+
+const COLORS = {
+  I: '#06b6d4',
+  O: '#facc15',
+  T: '#a855f7',
+  S: '#22c55e',
+  Z: '#ef4444',
+  J: '#3b82f6',
+  L: '#f97316',
+};
+
+const SHAPES = {
+  I: [
+    [[0, 1], [1, 1], [2, 1], [3, 1]],
+    [[2, 0], [2, 1], [2, 2], [2, 3]],
+    [[0, 2], [1, 2], [2, 2], [3, 2]],
+    [[1, 0], [1, 1], [1, 2], [1, 3]],
+  ],
+  O: [
+    [[1, 0], [2, 0], [1, 1], [2, 1]],
+    [[1, 0], [2, 0], [1, 1], [2, 1]],
+    [[1, 0], [2, 0], [1, 1], [2, 1]],
+    [[1, 0], [2, 0], [1, 1], [2, 1]],
+  ],
+  T: [
+    [[1, 0], [0, 1], [1, 1], [2, 1]],
+    [[1, 0], [1, 1], [2, 1], [1, 2]],
+    [[0, 1], [1, 1], [2, 1], [1, 2]],
+    [[1, 0], [0, 1], [1, 1], [1, 2]],
+  ],
+  S: [
+    [[1, 0], [2, 0], [0, 1], [1, 1]],
+    [[1, 0], [1, 1], [2, 1], [2, 2]],
+    [[1, 1], [2, 1], [0, 2], [1, 2]],
+    [[0, 0], [0, 1], [1, 1], [1, 2]],
+  ],
+  Z: [
+    [[0, 0], [1, 0], [1, 1], [2, 1]],
+    [[2, 0], [1, 1], [2, 1], [1, 2]],
+    [[0, 1], [1, 1], [1, 2], [2, 2]],
+    [[1, 0], [0, 1], [1, 1], [0, 2]],
+  ],
+  J: [
+    [[0, 0], [0, 1], [1, 1], [2, 1]],
+    [[1, 0], [2, 0], [1, 1], [1, 2]],
+    [[0, 1], [1, 1], [2, 1], [2, 2]],
+    [[1, 0], [1, 1], [0, 2], [1, 2]],
+  ],
+  L: [
+    [[2, 0], [0, 1], [1, 1], [2, 1]],
+    [[1, 0], [1, 1], [1, 2], [2, 2]],
+    [[0, 1], [1, 1], [2, 1], [0, 2]],
+    [[0, 0], [1, 0], [1, 1], [1, 2]],
+  ],
+};
+
+const JLSTZ_KICKS = {
+  '0>1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '1>0': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '1>2': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '2>1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '2>3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '3>2': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '3>0': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '0>3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+};
+
+const I_KICKS = {
+  '0>1': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
+  '1>0': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
+  '1>2': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+  '2>1': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
+  '2>3': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
+  '3>2': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
+  '3>0': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
+  '0>3': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+};
+
+const gameCanvas = document.querySelector('#gameCanvas');
+const holdCanvas = document.querySelector('#holdCanvas');
+const nextContainer = document.querySelector('#nextContainer');
+const scoreEl = document.querySelector('#score');
+const levelEl = document.querySelector('#level');
+const linesEl = document.querySelector('#lines');
+const highScoreEl = document.querySelector('#highScore');
+const overlay = document.querySelector('#overlay');
+const overlayTitle = document.querySelector('#overlayTitle');
+const overlayMessage = document.querySelector('#overlayMessage');
+
+gameCanvas.width = COLS * BLOCK;
+gameCanvas.height = VISIBLE_ROWS * BLOCK;
+const ctx = gameCanvas.getContext('2d');
+const holdCtx = holdCanvas.getContext('2d');
+
+class Tetris {
+  constructor() {
+    this.nextCanvases = [];
+    this.initNextPreview();
+    this.highScore = this.loadHighScore();
+    this.reset();
+    this.bindInput();
+    requestAnimationFrame((t) => this.loop(t));
+  }
+
+  reset() {
+    this.board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+    this.bag = [];
+    this.queue = [];
+    this.state = 'title';
+    this.score = 0;
+    this.lines = 0;
+    this.level = 1;
+    this.holdType = null;
+    this.holdUsed = false;
+    this.dropAccumulator = 0;
+    this.lastTime = 0;
+    this.lockTimer = 0;
+    this.lockResetCount = 0;
+    this.clearingRows = null;
+    this.clearAnimLeft = 0;
+    this.keysDown = new Set();
+    this.repeatState = {
+      ArrowLeft: { nextAt: 0, active: false },
+      ArrowRight: { nextAt: 0, active: false },
+    };
+    this.fillQueue();
+    this.spawn();
+    this.updateHud();
+    this.showOverlay('TETRIS', 'Enter でスタート');
+  }
+
+  initNextPreview() {
+    for (let i = 0; i < NEXT_COUNT; i += 1) {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'next-preview';
+      canvas.width = 120;
+      canvas.height = 80;
+      nextContainer.append(canvas);
+      this.nextCanvases.push(canvas.getContext('2d'));
+    }
+  }
+
+  bindInput() {
+    window.addEventListener('keydown', (e) => {
+      const key = e.key;
+      if ([
+        'ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', ' ', 'Shift', 'Escape',
+      ].includes(key)) {
+        e.preventDefault();
+      }
+
+      if (key === 'Enter' && (this.state === 'title' || this.state === 'gameover')) {
+        this.startGame();
+        return;
+      }
+
+      if (key === 'p' || key === 'P' || key === 'Escape') {
+        this.togglePause();
+        return;
+      }
+
+      if (this.state !== 'playing') {
+        return;
+      }
+
+      if (!this.keysDown.has(key)) {
+        this.keysDown.add(key);
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+          this.tryMove(key === 'ArrowLeft' ? -1 : 1, 0);
+          this.repeatState[key].active = true;
+          this.repeatState[key].nextAt = performance.now() + DAS_MS;
+        }
+      }
+
+      if (key === 'ArrowDown') {
+        this.softDropTick();
+      } else if (key === ' ') {
+        this.hardDrop();
+      } else if (key === 'z' || key === 'Z') {
+        this.rotate(-1);
+      } else if (key === 'x' || key === 'X' || key === 'ArrowUp') {
+        this.rotate(1);
+      } else if (key === 'c' || key === 'C' || key === 'Shift') {
+        this.hold();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      this.keysDown.delete(e.key);
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        this.repeatState[e.key].active = false;
+      }
+    });
+  }
+
+  startGame() {
+    this.state = 'playing';
+    this.board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+    this.bag = [];
+    this.queue = [];
+    this.fillQueue();
+    this.holdType = null;
+    this.holdUsed = false;
+    this.score = 0;
+    this.lines = 0;
+    this.level = 1;
+    this.clearingRows = null;
+    this.spawn();
+    this.updateHud();
+    this.hideOverlay();
+  }
+
+  togglePause() {
+    if (this.state === 'playing') {
+      this.state = 'paused';
+      this.showOverlay('PAUSED', 'P / Esc で再開');
+    } else if (this.state === 'paused') {
+      this.state = 'playing';
+      this.hideOverlay();
+    }
+  }
+
+  fillQueue() {
+    while (this.queue.length < NEXT_COUNT + 1) {
+      if (this.bag.length === 0) {
+        this.bag = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'].sort(() => Math.random() - 0.5);
+      }
+      this.queue.push(this.bag.pop());
+    }
+    this.renderPreviews();
+  }
+
+  spawn(type = this.queue.shift()) {
+    this.fillQueue();
+    this.current = {
+      type,
+      x: 3,
+      y: 0,
+      r: 0,
+    };
+    this.lockTimer = 0;
+    this.lockResetCount = 0;
+    if (this.collision(this.current.x, this.current.y, this.current.r)) {
+      this.gameOver();
+    }
+  }
+
+  collision(x, y, r, type = this.current.type) {
+    return SHAPES[type][r].some(([sx, sy]) => {
+      const px = x + sx;
+      const py = y + sy;
+      return px < 0 || px >= COLS || py >= ROWS || (py >= 0 && this.board[py][px]);
+    });
+  }
+
+  tryMove(dx, dy) {
+    const nx = this.current.x + dx;
+    const ny = this.current.y + dy;
+    if (!this.collision(nx, ny, this.current.r)) {
+      this.current.x = nx;
+      this.current.y = ny;
+      if (dy === 0) {
+        this.resetLockDelay();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  rotate(dir) {
+    const from = this.current.r;
+    const to = (from + (dir === 1 ? 1 : 3)) % 4;
+    const table = this.current.type === 'I' ? I_KICKS : JLSTZ_KICKS;
+    const key = `${from}>${to}`;
+    const kicks = this.current.type === 'O' ? [[0, 0]] : table[key];
+    for (const [kx, ky] of kicks) {
+      const nx = this.current.x + kx;
+      const ny = this.current.y - ky;
+      if (!this.collision(nx, ny, to)) {
+        this.current.x = nx;
+        this.current.y = ny;
+        this.current.r = to;
+        this.resetLockDelay();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  hold() {
+    if (this.holdUsed) return;
+    const type = this.current.type;
+    if (!this.holdType) {
+      this.holdType = type;
+      this.spawn();
+    } else {
+      const next = this.holdType;
+      this.holdType = type;
+      this.spawn(next);
+    }
+    this.holdUsed = true;
+    this.renderHold();
+  }
+
+  getGhostY() {
+    let y = this.current.y;
+    while (!this.collision(this.current.x, y + 1, this.current.r)) {
+      y += 1;
+    }
+    return y;
+  }
+
+  hardDrop() {
+    const targetY = this.getGhostY();
+    const dist = targetY - this.current.y;
+    this.current.y = targetY;
+    this.score += dist * 2;
+    this.lock();
+  }
+
+  softDropTick() {
+    if (this.tryMove(0, 1)) {
+      this.score += 1;
+    }
+  }
+
+  lock() {
+    SHAPES[this.current.type][this.current.r].forEach(([sx, sy]) => {
+      const px = this.current.x + sx;
+      const py = this.current.y + sy;
+      if (py >= 0) this.board[py][px] = this.current.type;
+    });
+    this.holdUsed = false;
+    const cleared = this.clearLines();
+    if (!cleared) {
+      this.spawn();
+    }
+    this.renderHold();
+    this.updateHud();
+  }
+
+  clearLines() {
+    const lines = [];
+    for (let y = 0; y < ROWS; y += 1) {
+      if (this.board[y].every(Boolean)) lines.push(y);
+    }
+    if (lines.length === 0) return false;
+
+    this.clearingRows = lines;
+    this.clearAnimLeft = 120;
+    this.score += (SCORE_TABLE[lines.length] || 0) * this.level;
+    this.lines += lines.length;
+    this.level = Math.floor(this.lines / 10) + 1;
+
+    setTimeout(() => {
+      this.board = this.board.filter((_, idx) => !lines.includes(idx));
+      while (this.board.length < ROWS) {
+        this.board.unshift(Array(COLS).fill(null));
+      }
+      this.clearingRows = null;
+      if (this.state === 'playing') this.spawn();
+      this.updateHud();
+    }, this.clearAnimLeft);
+
+    return true;
+  }
+
+  resetLockDelay() {
+    if (this.lockResetCount < MAX_LOCK_RESETS) {
+      this.lockTimer = 0;
+      this.lockResetCount += 1;
+    }
+  }
+
+  gravityMs() {
+    return Math.max(1000 - (this.level - 1) * 75, 70);
+  }
+
+  gameOver() {
+    this.state = 'gameover';
+    if (this.score > this.highScore) {
+      this.highScore = this.score;
+      this.saveHighScore();
+    }
+    this.updateHud();
+    this.showOverlay('GAME OVER', 'Enter でリトライ');
+  }
+
+  loadHighScore() {
+    try {
+      const value = Number(localStorage.getItem('tetris.highScore') || 0);
+      return Number.isFinite(value) ? value : 0;
+    } catch {
+      console.warn('localStorage unavailable: high score disabled');
+      return 0;
+    }
+  }
+
+  saveHighScore() {
+    try {
+      localStorage.setItem('tetris.highScore', String(this.highScore));
+    } catch {
+      console.warn('localStorage unavailable: high score not saved');
+    }
+  }
+
+  updateHud() {
+    scoreEl.textContent = String(this.score);
+    levelEl.textContent = String(this.level);
+    linesEl.textContent = String(this.lines);
+    highScoreEl.textContent = String(Math.max(this.highScore, this.score));
+  }
+
+  showOverlay(title, message) {
+    overlayTitle.textContent = title;
+    overlayMessage.textContent = message;
+    overlay.classList.remove('hidden');
+  }
+
+  hideOverlay() {
+    overlay.classList.add('hidden');
+  }
+
+  processHeldKeys(now, dt) {
+    if (this.keysDown.has('ArrowDown')) {
+      this.dropAccumulator += dt * 14;
+    }
+
+    ['ArrowLeft', 'ArrowRight'].forEach((key) => {
+      const state = this.repeatState[key];
+      if (!state.active || !this.keysDown.has(key)) return;
+      if (now >= state.nextAt) {
+        this.tryMove(key === 'ArrowLeft' ? -1 : 1, 0);
+        state.nextAt = now + ARR_MS;
+      }
+    });
+  }
+
+  update(dt, now) {
+    if (this.state !== 'playing' || this.clearingRows) return;
+
+    this.processHeldKeys(now, dt);
+    this.dropAccumulator += dt;
+    const interval = this.gravityMs();
+
+    while (this.dropAccumulator >= interval) {
+      this.dropAccumulator -= interval;
+      if (!this.tryMove(0, 1)) {
+        this.lockTimer += interval;
+        if (this.lockTimer >= LOCK_DELAY_MS) {
+          this.lock();
+          return;
+        }
+      }
+    }
+
+    if (this.collision(this.current.x, this.current.y + 1, this.current.r)) {
+      this.lockTimer += dt;
+      if (this.lockTimer >= LOCK_DELAY_MS) {
+        this.lock();
+      }
+    } else {
+      this.lockTimer = 0;
+    }
+  }
+
+  drawCell(targetCtx, x, y, color, alpha = 1) {
+    targetCtx.globalAlpha = alpha;
+    targetCtx.fillStyle = color;
+    targetCtx.fillRect(x * BLOCK, y * BLOCK, BLOCK - 1, BLOCK - 1);
+    targetCtx.globalAlpha = 1;
+  }
+
+  drawBoard() {
+    ctx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+    const offset = ROWS - VISIBLE_ROWS;
+
+    for (let y = offset; y < ROWS; y += 1) {
+      for (let x = 0; x < COLS; x += 1) {
+        const type = this.board[y][x];
+        if (type) this.drawCell(ctx, x, y - offset, COLORS[type]);
+      }
+    }
+
+    if (this.state === 'playing' || this.state === 'paused') {
+      const ghostY = this.getGhostY();
+      SHAPES[this.current.type][this.current.r].forEach(([sx, sy]) => {
+        const gy = ghostY + sy - offset;
+        if (gy >= 0) this.drawCell(ctx, this.current.x + sx, gy, COLORS[this.current.type], 0.3);
+      });
+
+      SHAPES[this.current.type][this.current.r].forEach(([sx, sy]) => {
+        const py = this.current.y + sy - offset;
+        if (py >= 0) this.drawCell(ctx, this.current.x + sx, py, COLORS[this.current.type]);
+      });
+    }
+
+    if (this.clearingRows) {
+      const blink = Math.floor(performance.now() / 30) % 2 === 0;
+      if (blink) {
+        this.clearingRows.forEach((row) => {
+          if (row >= offset) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(0, (row - offset) * BLOCK, gameCanvas.width, BLOCK - 1);
+          }
+        });
+      }
+    }
+  }
+
+  renderMini(ctx2d, type) {
+    ctx2d.clearRect(0, 0, ctx2d.canvas.width, ctx2d.canvas.height);
+    if (!type) return;
+    const miniBlock = 20;
+    const shape = SHAPES[type][0];
+    const minX = Math.min(...shape.map(([x]) => x));
+    const maxX = Math.max(...shape.map(([x]) => x));
+    const minY = Math.min(...shape.map(([, y]) => y));
+    const maxY = Math.max(...shape.map(([, y]) => y));
+    const width = (maxX - minX + 1) * miniBlock;
+    const height = (maxY - minY + 1) * miniBlock;
+    const ox = (ctx2d.canvas.width - width) / 2;
+    const oy = (ctx2d.canvas.height - height) / 2;
+
+    shape.forEach(([x, y]) => {
+      ctx2d.fillStyle = COLORS[type];
+      ctx2d.fillRect(ox + (x - minX) * miniBlock, oy + (y - minY) * miniBlock, miniBlock - 1, miniBlock - 1);
+    });
+  }
+
+  renderPreviews() {
+    this.nextCanvases.forEach((previewCtx, idx) => {
+      this.renderMini(previewCtx, this.queue[idx]);
+    });
+  }
+
+  renderHold() {
+    this.renderMini(holdCtx, this.holdType);
+  }
+
+  loop(time) {
+    const dt = Math.min(time - this.lastTime || 0, 50);
+    this.lastTime = time;
+
+    this.update(dt, time);
+    this.drawBoard();
+
+    requestAnimationFrame((t) => this.loop(t));
+  }
+}
+
+new Tetris();
